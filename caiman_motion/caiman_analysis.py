@@ -63,6 +63,7 @@ def run_motioncorrect(fname, max_shifts=(12, 12), strides=(96, 96), overlaps=(48
     
     # If pw_rigid is set to False, only rigid motion correction is performed
     if pw_rigid is False:
+        print("Running rigid motion correction.")
         # Creation of the MotionCorrect object with the specified parameters
         mc = MotionCorrect(fname, dview=dview, max_shifts=max_shifts,
                     strides=strides, overlaps=overlaps,
@@ -79,12 +80,14 @@ def run_motioncorrect(fname, max_shifts=(12, 12), strides=(96, 96), overlaps=(48
         # Stop the cluster server after motion correction is done to free up resources
         cm.stop_server(dview=dview)
 
+        print("Motion correction done. Returning the corrected movie.")
         # Return the corrected movie
         return m_corr
     
     # If pw_rigid is set to True, first rigid motion correction is performed and then piecewise-rigid motion correction is performed 
     # using the rigid template.
     else:
+        print("Running both rigid motion correction and piecewise-rigid motion correction using the rigid template.")
         # Creation of the MotionCorrect object with the specified parameters for rigid motion correction.
         # The pw_rigid parameter is set to False for the first rigid motion correction step.
         mc = MotionCorrect(fname, dview=dview, max_shifts=max_shifts,
@@ -98,6 +101,8 @@ def run_motioncorrect(fname, max_shifts=(12, 12), strides=(96, 96), overlaps=(48
 
         # Load the rigid motion corrected movie into memory
         m_corr = cm.load(mc.mmap_file)
+
+        print("Rigid motion correction done. Now running piecewise-rigid motion correction using the rigid template.")
 
         # After the first rigid motion correction step, the pw_rigid parameter is set to True for the piecewise-rigid motion correction
         mc.pw_rigid = True
@@ -114,6 +119,46 @@ def run_motioncorrect(fname, max_shifts=(12, 12), strides=(96, 96), overlaps=(48
         # Stop the cluster server after motion correction is done to free up resources
         cm.stop_server(dview=dview)
 
+        print("Piecewise-rigid motion correction done. Returning the rigid motion corrected movie and the piecewise-rigid motion corrected movie.")
+
         # Return both the rigid motion corrected movie and the piecewise-rigid motion corrected movie
         return m_corr, m_els
-    
+
+# Function to run alignment of two different videos to each other using the template 
+# of the first video.
+def run_alignment(orig, ref, max_shifts=(12, 12), strides=(96, 96), 
+                  overlaps=(48, 48), max_deviation_rigid=6, shifts_opencv=True, 
+                  border_nan='copy', nonneg_movie=True, save_movie=True):
+    # start the cluster (if a cluster already exists terminate it)
+    if 'dview' in locals():
+        cm.stop_server(dview=dview)
+    c, dview, n_processes = cm.cluster.setup_cluster(
+        backend='multiprocessing', n_processes=None, single_thread=False)
+
+    # Aliging of two different videos to each other using the template of the first video. 
+    # This is useful if you have two different videos of the same field of view and want to 
+    # align them to each other for further analysis.
+
+    # Set the mean of the ref as template for the alignment of the two videos
+    template = ref.mean(axis=0)
+
+    # Creation of the MotionCorrect object with the specified parameters for alignment
+    mc = MotionCorrect(orig, dview=dview, max_shifts=max_shifts,
+                strides=strides, overlaps=overlaps,
+                max_deviation_rigid=max_deviation_rigid, 
+                shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie,
+                border_nan=border_nan, pw_rigid= False)
+
+    # Run motion correction and save the corrected movie in memory if save_movie is set to True, using the template of the ref video for alignment
+    mc.motion_correct(save_movie=save_movie, template=template)
+
+    # Load the aligned movie into memory
+    aligned = cm.load(mc.mmap_file)
+
+    # Stop the cluster server after motion correction is done to free up resources
+    cm.stop_server(dview=dview)
+
+    print("Alignment of the two videos done. Returning the aligned movie, the motion corrected reference video and the motion corrected original video.")
+
+    # Return the aligned movie
+    return aligned
