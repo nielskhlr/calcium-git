@@ -51,8 +51,10 @@ def load_video(fname, fframe, downsample_ratio = 0.2, resize=False, play_movies=
     return m_orig
 
 # Function to run motion correction on the video
+# pw_rigid is messing with the intensity values of the video, needs to be fixed first!
 def run_motioncorrect(fname, max_shifts=(12, 12), strides=(96, 96), overlaps=(48, 48),
-                         max_deviation_rigid=6, shifts_opencv=True, border_nan='copy', downsample_ratio = 1, nonneg_movie=True, save_movie=True, pw_rigid = False):
+                         max_deviation_rigid=6, shifts_opencv=True, border_nan='copy', downsample_ratio = 1, nonneg_movie=True, 
+                         save_movie=True, pw_rigid = False):
     # start the cluster (if a cluster already exists terminate it)
     if 'dview' in locals():
         cm.stop_server(dview=dview)
