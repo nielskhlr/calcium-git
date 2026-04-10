@@ -66,37 +66,55 @@ def butter_lowpass_filter(data, cutOff, fs, order=4):
 def load_file(path, multi_files=False, file_id=None):
     path = Path(path) # Convert string path to Path object
     path = path.as_posix() # Convert to POSIX format (using forward slashes)
-    parent_path = Path(path) # Create a Path object for the parent directory
+
+    # check if the provided path is a file (contains a dot) or a directory (does not contain a dot)
+    if "*.avi" in path:
+        # Use the .avi file found in the directory as the video path
+        video_path = path
+
+        # Read the video using the read_video function defined above, which returns a numpy array of video frames
+        video = read_video(str(path))
     
-    # Find all .avi files in directory, return a list of Path objects for each file found
-    avi_files = list(parent_path.glob("*.avi"))
+    # If the provided path is a directory, search for .avi files in the directory and read the first one found 
+    # (or the one specified by file_id if multi_files is True)
+    elif "*.avi" not in path:
+        parent_path = Path(path) # Create a Path object for the parent directory
+        
+        # Find all .avi files in directory, return a list of Path objects for each file found
+        avi_files = list(parent_path.glob("*.avi"))
 
-    # Check if any .avi files were found, if not raise an error
-    if len(avi_files) == 0:
-        raise ValueError("Warning: No .avi files found in the specified directory.")
-        return
-    # If multiple .avi files are found, print a warning and use the first one
-    elif len(avi_files) > 1 and multi_files == False:
-        print("Warning: Multiple .avi files found, using: " + str(avi_files[0]))
-        file_id = 0
+        # Check if any .avi files were found, if not raise an error
+        if len(avi_files) == 0:
+            raise ValueError("Warning: No .avi files found in the specified directory.")
+            return
+        # If multiple .avi files are found, print a warning and use the first one
+        elif len(avi_files) > 1 and multi_files == False:
+            print("Warning: Multiple .avi files found, using: " + str(avi_files[0]))
+            file_id = 0
 
-    # If multiple .avi files are found and multi_files is set to True, print a warning and use file with file_id
-    elif len(avi_files) > 1 and multi_files == True:
+        # If multiple .avi files are found and multi_files is set to True, print a warning and use file with file_id
+        elif len(avi_files) > 1 and multi_files == True:
+            if file_id is None:
+                print("Error: Multiple .avi files found and multi_files is set to True, but no file_id provided. \n"
+                "Using the first file by default. Please provide a valid file_id between 0 and " + str(len(avi_files)-1) + " to select a specific file.")
+                file_id = 0
+            
+            elif file_id < 0 or file_id >= len(avi_files):
+                raise ValueError("Error: file_id is out of range. Please provide a valid file_id between 0 and " + str(len(avi_files)-1))
+                return
+            
+            else:
+                print("Warning: Multiple .avi files found, using: " + str(avi_files[file_id]))
+                file_id = file_id
+
         if file_id is None:
-            raise ValueError("Error: Multiple .avi files found and multi_files is set to True, but no file_id provided.")
-            return
-        elif file_id < 0 or file_id >= len(avi_files):
-            raise ValueError("Error: file_id is out of range. Please provide a valid file_id between 0 and " + str(len(avi_files)-1))
-            return
-        else:
-            print("Warning: Multiple .avi files found, using: " + str(avi_files[file_id]))
-            file_id = file_id
+            file_id = 0
+    
+        # Use the first .avi file found in the directory as the video path
+        video_path = avi_files[file_id]
 
-    # Use the first .avi file found in the directory as the video path
-    video_path = avi_files[file_id]
-
-    # Read the video using the read_video function defined above, which returns a numpy array of video frames
-    video = read_video(str(avi_files[file_id]))
+        # Read the video using the read_video function defined above, which returns a numpy array of video frames
+        video = read_video(str(avi_files[file_id]))
 
     # Print the length of the video in frames for user information
     print("Lenght of video: "+str(video.shape[0])+" Frames")
@@ -191,7 +209,8 @@ def plot_active_neurons(video_mean, labels, ax=None):
     )
 
     # Set the title of the plot to indicate that these are the active neurons, and list the selected ROIs in the title for clarity
-    ax.set_title(f"K+ Active Neurons:\n{selected_rois}")
+    ax.set_title(f"K+ Active Neurons:")
+    print(f"Selected ROIs: {selected_rois}")
 
     return ax
 
@@ -360,4 +379,17 @@ def analyze_roi_traces(video, video_mean, video_path, labels, video_fps, show_gr
         # If there is no peak found in the differentiated signal of the current ROI, it is not considered active 
         # and not appended to the list of selected ROIs
     print(str(counter)+" counted, positive ROIs")
-    return labels_new, polygons_new
+    return
+
+# Main function to run the entire pipeline for ROI analysis, which includes loading the video file, predicting neurons, analyzing the 
+# fluorescence traces of the ROIs, exporting the selected ROIs, and comparing the original mean image with the predicted neurons 
+# and selected ROIs.
+def roi_pipeline(path, multi_files=False, file_id=None, export=True, prob=0.7, video_fps=10, show_graphs=False, prom=10, cutoff=0.1, 
+                 compare=False):
+    video, video_path = load_file(path, multi_files=multi_files, file_id=file_id)
+    video_mean = video.mean(axis=0)
+    labels, polygons = predict_neurons(video_mean, video_path, export=False, prob=prob)
+    analyze_roi_traces(video, video_mean, video_path, labels, video_fps=video_fps, show_graphs=show_graphs, prom=prom, cutoff=cutoff)
+    export_roi_selection(video_mean, video_path, labels, export=export)
+    if compare == True:
+        compare_roi_selection(video_mean, labels)
