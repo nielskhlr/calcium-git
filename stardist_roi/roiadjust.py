@@ -15,9 +15,6 @@ from stardist import export_imagej_rois
 from pathlib import Path
 from skimage import measure
 
-# Global list to store the IDs of selected ROIs, which can be accessed and modified across different functions in the script
-selected_rois = []
-
 # Function for reading video frames with OpenCV and converting them to a numpy array.
 # Here only the first channel is used, as the videos are single channel grayscale.
 # By Annemarie Sodmann
@@ -65,10 +62,10 @@ def butter_lowpass_filter(data, cutOff, fs, order=4):
 # and return both the video data and the path to the video file.
 def load_file(path, multi_files=False, file_id=None):
     path = Path(path) # Convert string path to Path object
-    path = path.as_posix() # Convert to POSIX format (using forward slashes)
+    #!#path = path.as_posix() # Convert to POSIX format (using forward slashes)
 
     # check if the provided path is a file (contains a dot) or a directory (does not contain a dot)
-    if "*.avi" in path:
+    if path.is_file():
         # Use the .avi file found in the directory as the video path
         video_path = path
 
@@ -77,7 +74,7 @@ def load_file(path, multi_files=False, file_id=None):
     
     # If the provided path is a directory, search for .avi files in the directory and read the first one found 
     # (or the one specified by file_id if multi_files is True)
-    elif "*.avi" not in path:
+    else:
         parent_path = Path(path) # Create a Path object for the parent directory
         
         # Find all .avi files in directory, return a list of Path objects for each file found
@@ -141,17 +138,8 @@ def predict_neurons(video_mean, video_path, export=True, prob=0.7):
     # Return the predicted labels and polygons for further processing
     return labels, polygons
 
-# Function to append the ID of a selected ROI to the global list
-def append_roi_selection(roi_id):
-    # Access the global list of selected ROIs to modify it within the function
-    global selected_rois
-    
-    # Append the ROI ID to the list of selected ROIs only if it is not already in the list, preventing duplicates
-    if roi_id not in selected_rois:
-        selected_rois.append(roi_id)
-
 # Function to visualize the selected ROIs on the mean image of the video, highlighting them in a scatter plot
-def show_roi_selection(video_mean, labels):
+def show_roi_selection(video_mean, labels, selected_rois):
     # Create a figure with a specified size and display the mean image of the video in grayscale
     plt.figure(figsize=(6,6))
     plt.imshow(video_mean, cmap="gray")
@@ -199,7 +187,7 @@ def plot_roi_contours(video_mean, labels, roi_ids=None, color="red", ax=None):
 
 # Function to plot the contours of the active neurons (selected ROIs) on the mean image of the video.
 # Also possible to use for subplots by providing an ax argument, if no ax is provided, a new figure and ax will be created for plotting
-def plot_active_neurons(video_mean, labels, ax=None):
+def plot_active_neurons(video_mean, labels, selected_rois, ax=None):
     ax = plot_roi_contours(
         video_mean,
         labels,
@@ -231,7 +219,7 @@ def plot_predicted_neurons(video_mean, labels, ax=None):
 # Function to export the selected ROIs as ImageJ ROIs in a .zip file, using the coordinates of the predicted polygons for the ROIs
 # Running a new prediction with the masked image to get the polygons for the selected ROIs, and then exporting only those polygons 
 # as ROIs in ImageJ format (otherwise hard to get them in ImageJ format)
-def export_roi_selection(video_mean, video_path, labels, export):
+def export_roi_selection(video_mean, video_path, labels, selected_rois, export=True):
     # Pretrained Model for Fluorescence stainings, takes 2D single channel pictures
     model = StarDist2D.from_pretrained('2D_versatile_fluo')
 
@@ -249,17 +237,12 @@ def export_roi_selection(video_mean, video_path, labels, export):
     if export == True:
         roi_path = video_path.parent / (video_path.stem + "_rois_filtered.zip")
         export_imagej_rois(roi_path, polygons_new['coord'])
-
+        print(f"Exported selected ROIs as ImageJ ROIs in: {roi_path}")
     # Return the new labels and polygons for the selected ROIs, which can be used for further analysis or visualization if needed
     return labels_new, polygons_new
 
-# Function to reset the list of selected ROIs, clearing all previously selected ROIs from the global list
-def reset_roi_selection():
-    global selected_rois
-    selected_rois = []
-
 # Function to compare the original mean image of the video with the masked ROIs and the predicted neurons,
-def compare_roi_selection(video_mean, labels):
+def compare_roi_selection(video_mean, labels, selected_rois):
     # Creating a mask for the selected ROIs by checking which labels in the labels array correspond to the selected ROIs
     mask1 = np.isin(labels, selected_rois)
     
@@ -285,7 +268,7 @@ def compare_roi_selection(video_mean, labels):
     plot_predicted_neurons(video_mean, labels, ax=axes[1])
 
     # Active Neurons (Selected ROIs)
-    plot_active_neurons(video_mean, labels, ax=axes[2])
+    plot_active_neurons(video_mean, labels, selected_rois, ax=axes[2])
 
     # Masked ROIs
     axes[3].imshow(masked_roi, cmap="gray", vmax=20)
@@ -299,7 +282,8 @@ def compare_roi_selection(video_mean, labels):
 # Main function to analyze the fluorescence traces of the ROIs, identify active ROIs based on significant peaks in the signal, 
 # and adding the IDs of the active ROIs to the global list of selected ROIs.
 # This function integrates all the previous functions to perform a comprehensive analysis of the video data.
-def analyze_roi_traces(video, video_mean, video_path, labels, video_fps, show_graphs=False, prom=10, cutoff=0.1):
+def analyze_roi_traces(video, video_mean, video_path, labels, video_fps, show_graphs=False, 
+                       prom=10, cutoff=0.1):
     # Extracts the mean fluorescence traces for each ROI across all frames of the video, 
     # resulting in a DataFrame where each column corresponds to an ROI and each row corresponds to a frame
     roi_traces_mean = get_traces(video, labels)
@@ -310,6 +294,7 @@ def analyze_roi_traces(video, video_mean, video_path, labels, video_fps, show_gr
     # Counter for the total number of ROIs that are identified as active 
     # based on the presence of significant peaks in their fluorescence traces
     counter = 0
+    selected_rois = []
 
     # Setting the time axis for plotting and analyzing the signal, where the length of the video in seconds is used as the stop value,
     # the starting point of the analysis is set to 0.2 seconds to avoid initial artifacts, and the signal resolution in seconds is 
@@ -346,9 +331,8 @@ def analyze_roi_traces(video, video_mean, video_path, labels, video_fps, show_gr
             # The ROI ID is extracted from the column name of the DataFrame, 
             # which is in the format "roi_X", where X is the number of the ROI.
             roi_id = int(i.split("_")[1])
-            # Appending the ID of the active ROI to the global list of selected ROIs 
-            # using the append_roi_selection function defined earlier
-            append_roi_selection(roi_id)
+            # Appending the ID of the active ROI to the list of selected ROIs
+            selected_rois.append(roi_id)
 
             if show_graphs == True:
                 ######## Show graph only, if peaks are found
@@ -379,17 +363,24 @@ def analyze_roi_traces(video, video_mean, video_path, labels, video_fps, show_gr
         # If there is no peak found in the differentiated signal of the current ROI, it is not considered active 
         # and not appended to the list of selected ROIs
     print(str(counter)+" counted, positive ROIs")
-    return
+    return selected_rois
 
 # Main function to run the entire pipeline for ROI analysis, which includes loading the video file, predicting neurons, analyzing the 
 # fluorescence traces of the ROIs, exporting the selected ROIs, and comparing the original mean image with the predicted neurons 
 # and selected ROIs.
-def roi_pipeline(path, multi_files=False, file_id=None, export=True, prob=0.7, video_fps=10, show_graphs=False, prom=10, cutoff=0.1, 
-                 compare=False):
+def roi_pipeline(path, multi_files=False, file_id=None, export=True, prob=0.7, video_fps=10, 
+                 show_graphs=False, prom=10, cutoff=0.1, compare=False):
     video, video_path = load_file(path, multi_files=multi_files, file_id=file_id)
     video_mean = video.mean(axis=0)
+
     labels, polygons = predict_neurons(video_mean, video_path, export=False, prob=prob)
-    analyze_roi_traces(video, video_mean, video_path, labels, video_fps=video_fps, show_graphs=show_graphs, prom=prom, cutoff=cutoff)
-    export_roi_selection(video_mean, video_path, labels, export=export)
+
+    selected_rois = analyze_roi_traces(video, video_mean, video_path, labels, 
+                                       video_fps=video_fps, show_graphs=show_graphs, prom=prom, 
+                                       cutoff=cutoff)
+    
+    labels_selected, polygons_selected = export_roi_selection(video_mean, video_path, labels, 
+                                                              selected_rois, export=export)
+    
     if compare == True:
-        compare_roi_selection(video_mean, labels)
+        compare_roi_selection(video_mean, labels, selected_rois)
