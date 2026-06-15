@@ -14,7 +14,10 @@ from csbdeep.utils import normalize
 from stardist import export_imagej_rois
 from pathlib import Path
 from skimage import measure
-import sys
+import argparse
+import os
+import time
+import shutil
 
 # Function for reading video frames with OpenCV and converting them to a numpy array.
 # Here only the first channel is used, as the videos are single channel grayscale.
@@ -123,7 +126,19 @@ def load_file(path, multi_files=False, file_id=None):
 # Function to predict neurons in the video using a pretrained StarDist2D model
 def predict_neurons(video_mean, video_path, export=True, prob=0.7):
     # Pretrained Model for Fluorescence stainings, takes 2D single channel pictures
-    model = StarDist2D.from_pretrained('2D_versatile_fluo')
+    model_name = '2D_versatile_fluo'
+    model_dir = os.path.expanduser(f"~/.csbdeep/models/{model_name}")
+    for attempt in range(5):
+        try:
+            model = StarDist2D.from_pretrained(model_name)
+            break
+        except OSError as e:
+            if 'truncated file' in str(e) and os.path.exists(model_dir):
+                print(f"Model file corrupted, removing {model_dir} and retrying...")
+                shutil.rmtree(model_dir)
+                time.sleep(1)
+            else:
+                raise
 
     # Preditction of possible cells in the normalized, averaged image "video_mean", here with a probability threshold of 70%
     labels, polygons = model.predict_instances(normalize(video_mean), prob_thresh=prob)
@@ -218,29 +233,16 @@ def plot_predicted_neurons(video_mean, labels, ax=None):
     return ax
 
 # Function to export the selected ROIs as ImageJ ROIs in a .zip file, using the coordinates of the predicted polygons for the ROIs
-# Running a new prediction with the masked image to get the polygons for the selected ROIs, and then exporting only those polygons 
-# as ROIs in ImageJ format (otherwise hard to get them in ImageJ format)
-def export_roi_selection(video_mean, video_path, labels, selected_rois, export=True):
-    # Pretrained Model for Fluorescence stainings, takes 2D single channel pictures
-    model = StarDist2D.from_pretrained('2D_versatile_fluo')
+def export_roi_selection(labels, selected_rois, polygons, roi_output, export=True):
+    # Select the polygons for the selected ROIs
+    selected_polygons = [polygons['coord'][i-1] for i in selected_rois if i-1 < len(polygons['coord'])]
 
-    # Masking of the mean image to only include the selected ROIs
-    mask = np.isin(labels, selected_rois)
-    masked_image = video_mean.copy()
-
-    masked_image[~mask] = np.median(video_mean)
-
-    # New prediction with the masked image to get the polygons for the selected ROIs
-    labels_new, polygons_new = model.predict_instances(normalize(masked_image))
-
-    # Exporting the polygons of the selected ROIs as ImageJ ROIs in a .zip file, 
-    # using the same path and name as the original video with the suffix "_rois_filtered.zip"
+    # Exporting the polygons of the selected ROIs as ImageJ ROIs in a .zip file
     if export == True:
-        roi_path = video_path.parent / (video_path.stem + "_rois_filtered.zip")
-        export_imagej_rois(roi_path, polygons_new['coord'])
-        print(f"Exported selected ROIs as ImageJ ROIs in: {roi_path}")
-    # Return the new labels and polygons for the selected ROIs, which can be used for further analysis or visualization if needed
-    return labels_new, polygons_new
+        export_imagej_rois(roi_output, selected_polygons)
+        print(f"Exported selected ROIs to: {roi_output}")
+    # Return the selected polygons for potential further use
+    return selected_polygons
 
 # Function to compare the original mean image of the video with the masked ROIs and the predicted neurons,
 def compare_roi_selection(video_mean, labels, selected_rois):
@@ -369,7 +371,7 @@ def analyze_roi_traces(video, video_mean, video_path, labels, video_fps, show_gr
 # Main function to run the entire pipeline for ROI analysis, which includes loading the video file, predicting neurons, analyzing the 
 # fluorescence traces of the ROIs, exporting the selected ROIs, and comparing the original mean image with the predicted neurons 
 # and selected ROIs.
-def roi_pipeline(path, multi_files=False, file_id=None, export=True, prob=0.7, video_fps=10, 
+def roi_pipeline(path, roi_output, multi_files=False, file_id=None, export=True, prob=0.7, video_fps=10, 
                  show_graphs=False, prom=10, cutoff=0.1, compare=False):
     video, video_path = load_file(path, multi_files=multi_files, file_id=file_id)
     video_mean = video.mean(axis=0)
@@ -380,18 +382,26 @@ def roi_pipeline(path, multi_files=False, file_id=None, export=True, prob=0.7, v
                                        video_fps=video_fps, show_graphs=show_graphs, prom=prom, 
                                        cutoff=cutoff)
     
-    labels_selected, polygons_selected = export_roi_selection(video_mean, video_path, labels, 
-                                                              selected_rois, export=export)
+    selected_polygons = export_roi_selection(labels, selected_rois, polygons, roi_output=roi_output, export=export)
     
     if compare == True:
         compare_roi_selection(video_mean, labels, selected_rois)
 
 # Function to run the full pipeline with snakemake parameters
-def run(path):
+def run(k_corrected_path, roi_output):
     print(f"Processing ROI analysis...")
-    roi_pipeline(path, multi_files=False, file_id=None, export=True, prob=0.7, video_fps=10, 
+    roi_pipeline(k_corrected_path, roi_output=roi_output, multi_files=False, file_id=None, export=True, prob=0.7, video_fps=10, 
                  show_graphs=False, prom=10, cutoff=0.1, compare=False)
 
-# If this script is run directly, the run function will be called with the specified parameters for the file, template and fframe.
-if __name__ == "__main__":    
-    run(sys.argv[1])        
+# If this script is run directly, the run function will be called with the specified parameters for the file.
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("k_corrected_input")
+    parser.add_argument("roi_output")
+
+    args = parser.parse_args()
+
+    run(
+        args.k_corrected_input,
+        args.roi_output
+    )

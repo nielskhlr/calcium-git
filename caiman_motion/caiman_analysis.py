@@ -7,7 +7,8 @@ import logging
 import caiman as cm
 from caiman.motion_correction import MotionCorrect, tile_and_correct, motion_correction_piecewise
 from caiman.utils.utils import download_demo
-import sys
+import argparse
+
 
 # set CPU threads
 try:
@@ -36,10 +37,10 @@ handler.setFormatter(logfmt)
 logger.addHandler(handler)
 
 # Function to load video and if needed downsample and play it
-def load_video(fname, fframe, downsample_ratio = 0.2, resize=False, play_movies=True, subindices = None):
-    # load video, important to set the framerate (fframe) to the correct value, otherwise it will resize the video. 
+def load_video(path, framerate, downsample_ratio = 0.2, resize=False, play_movies=True, subindices = None):
+    # load video, important to set the framerate (framerate) to the correct value, otherwise it will resize the video. 
     # If subindices is set, only the specified frames will be loaded.
-    m_orig = cm.load(fname, subindices=subindices, fr=fframe)
+    m_orig = cm.load(path, subindices=subindices, fr=framerate)
 
     # Downsampling by 0.2 of time to enhance motion correction and its speed.
     # If set to False or if downsample_ratio is set to 1, no downsampling will be performed.
@@ -48,12 +49,12 @@ def load_video(fname, fframe, downsample_ratio = 0.2, resize=False, play_movies=
     
     # Set play_movies to false if you want to disable play of movies, e.g. for remote-hosted Jupyter environments
     if play_movies:
-        m_orig.play(q_max=99.5, fr=fframe, magnification=2)   # play movie (press q to exit)
+        m_orig.play(q_max=99.5, fr=framerate, magnification=2)   # play movie (press q to exit)
     return m_orig
 
 # Function to run motion correction on the video
 # pw_rigid is messing with the intensity values of the video, needs to be fixed first!
-def run_motioncorrect(fname, max_shifts=(12, 12), strides=(96, 96), overlaps=(48, 48),
+def run_motioncorrect(file, max_shifts=(12, 12), strides=(96, 96), overlaps=(48, 48),
                          max_deviation_rigid=6, shifts_opencv=True, border_nan='copy', downsample_ratio = 1, nonneg_movie=True, 
                          save_movie=True, pw_rigid = False):
     # start the cluster (if a cluster already exists terminate it)
@@ -66,7 +67,7 @@ def run_motioncorrect(fname, max_shifts=(12, 12), strides=(96, 96), overlaps=(48
     if pw_rigid is False:
         print("Running rigid motion correction.")
         # Creation of the MotionCorrect object with the specified parameters
-        mc = MotionCorrect(fname, dview=dview, max_shifts=max_shifts,
+        mc = MotionCorrect(file, dview=dview, max_shifts=max_shifts,
                     strides=strides, overlaps=overlaps,
                     max_deviation_rigid=max_deviation_rigid, 
                     shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie,
@@ -91,7 +92,7 @@ def run_motioncorrect(fname, max_shifts=(12, 12), strides=(96, 96), overlaps=(48
         print("Running both rigid motion correction and piecewise-rigid motion correction using the rigid template.")
         # Creation of the MotionCorrect object with the specified parameters for rigid motion correction.
         # The pw_rigid parameter is set to False for the first rigid motion correction step.
-        mc = MotionCorrect(fname, dview=dview, max_shifts=max_shifts,
+        mc = MotionCorrect(file, dview=dview, max_shifts=max_shifts,
                     strides=strides, overlaps=overlaps,
                     max_deviation_rigid=max_deviation_rigid, 
                     shifts_opencv=shifts_opencv, nonneg_movie=nonneg_movie,
@@ -165,29 +166,44 @@ def run_alignment(orig, ref, max_shifts=(12, 12), strides=(96, 96),
     return aligned
 
 # Run the full pipeline with standard parameters and export aligned and template video to the export folder. 
-def run_pipeline(file, template, fframe):
-    m_orig = load_video(file, fframe, play_movies=False)
-    m_template = load_video(template, fframe, play_movies=False)
+def run_pipeline(path_orig, path_template, framerate, out_corr_template, out_aligned):
+    m_orig = load_video(path_orig, framerate, play_movies=False)
+    m_template = load_video(path_template, framerate, play_movies=False)
     
     m_corr_orig = run_motioncorrect(m_orig)
     m_corr_template = run_motioncorrect(m_template)
     
     m_orig_aligned = run_alignment(m_corr_orig, m_corr_template)
 
-    m_corr_template.save(file_name='./export/template_export.avi', 
+    m_corr_template.save(file_name=out_corr_template, 
             q_min=0.0, 
             q_max=252.0)   
 
-    m_orig_aligned.save(file_name='./export/aligned_export.avi', 
+    m_orig_aligned.save(file_name=out_aligned, 
             q_min=0.0, 
             q_max=252.0)
     return
 
 # Function to run the full pipeline with snakemake parameters
-def run(file, template, fframe):
+def run(path_orig, path_template, framerate, out_corr_template, out_aligned):
     print(f"Processing motion alignment...")
-    run_pipeline(file, template, fframe)
+    run_pipeline(path_orig, path_template, framerate, out_corr_template, out_aligned)
 
 # If this script is run directly, the run function will be called with the specified parameters for the file, template and fframe.
-if __name__ == "__main__":    
-    run(sys.argv[1], sys.argv[2], sys.argv[3])
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("k_input")
+    parser.add_argument("spont_input")
+    parser.add_argument("framerate", type=float)
+    parser.add_argument("k_output_corrected")
+    parser.add_argument("spont_output_aligned")
+
+    args = parser.parse_args()
+
+    run(
+        args.k_input,
+        args.spont_input,
+        args.framerate,
+        args.k_output_corrected,
+        args.spont_output_aligned
+    )
