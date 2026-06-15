@@ -7,6 +7,7 @@ import logging
 import caiman as cm
 from caiman.motion_correction import MotionCorrect, tile_and_correct, motion_correction_piecewise
 from caiman.utils.utils import download_demo
+import sys
 
 # set CPU threads
 try:
@@ -162,3 +163,31 @@ def run_alignment(orig, ref, max_shifts=(12, 12), strides=(96, 96),
 
     # Return the aligned movie
     return aligned
+
+# Run the full pipeline with standard parameters and export aligned and template video to the export folder. 
+def run_pipeline(file, template, fframe):
+    m_orig = load_video(file, fframe, play_movies=False)
+    m_template = load_video(template, fframe, play_movies=False)
+    
+    m_corr_orig = run_motioncorrect(m_orig)
+    m_corr_template = run_motioncorrect(m_template)
+    
+    m_orig_aligned = run_alignment(m_corr_orig, m_corr_template)
+
+    m_corr_template.save(file_name='./export/template_export.avi', 
+            q_min=0.0, 
+            q_max=252.0)   
+
+    m_orig_aligned.save(file_name='./export/aligned_export.avi', 
+            q_min=0.0, 
+            q_max=252.0)
+    return
+
+# Function to run the full pipeline with snakemake parameters
+def run(file, template, fframe):
+    print(f"Processing motion alignment...")
+    run_pipeline(file, template, fframe)
+
+# If this script is run directly, the run function will be called with the specified parameters for the file, template and fframe.
+if __name__ == "__main__":    
+    run(sys.argv[1], sys.argv[2], sys.argv[3])
