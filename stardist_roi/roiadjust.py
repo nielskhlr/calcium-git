@@ -14,6 +14,7 @@ from csbdeep.utils import normalize
 from stardist import export_imagej_rois
 from pathlib import Path
 from skimage import measure
+import sys
 
 # Function for reading video frames with OpenCV and converting them to a numpy array.
 # Here only the first channel is used, as the videos are single channel grayscale.
@@ -384,3 +385,13 @@ def roi_pipeline(path, multi_files=False, file_id=None, export=True, prob=0.7, v
     
     if compare == True:
         compare_roi_selection(video_mean, labels, selected_rois)
+
+# Function to run the full pipeline with snakemake parameters
+def run(path):
+    print(f"Processing ROI analysis...")
+    roi_pipeline(path, multi_files=False, file_id=None, export=True, prob=0.7, video_fps=10, 
+                 show_graphs=False, prom=10, cutoff=0.1, compare=False)
+
+# If this script is run directly, the run function will be called with the specified parameters for the file, template and fframe.
+if __name__ == "__main__":    
+    run(sys.argv[1])        
