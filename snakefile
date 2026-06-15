@@ -45,4 +45,4 @@ rule roi_detection:
     conda:
         "envs/roi_environment.yml"
     shell:
-        "python scripts/roiadjustment.py {input} {output}"
+        "python scripts/roiadjust.py {input} {output}"
