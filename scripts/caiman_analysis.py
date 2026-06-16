@@ -54,9 +54,13 @@ def load_video(path, framerate, downsample_ratio = 0.2, resize=False, play_movie
 
 # Function to run motion correction on the video
 # pw_rigid is messing with the intensity values of the video, needs to be fixed first!
-def run_motioncorrect(file, max_shifts=(12, 12), strides=(96, 96), overlaps=(48, 48),
+def run_motioncorrect(file, out_path, max_shifts=(12, 12), strides=(96, 96), overlaps=(48, 48),
                          max_deviation_rigid=6, shifts_opencv=True, border_nan='copy', downsample_ratio = 1, nonneg_movie=True, 
                          save_movie=True, pw_rigid = False):
+    # create temporary directory for motion correction if it does not exist
+    tmp_dir = os.path.dirname(out_path)
+    os.makedirs(tmp_dir, exist_ok=True)
+
     # start the cluster (if a cluster already exists terminate it)
     if 'dview' in locals():
         cm.stop_server(dview=dview)
@@ -170,18 +174,18 @@ def run_pipeline(path_orig, path_template, framerate, out_corr_template, out_ali
     m_orig = load_video(path_orig, framerate, play_movies=False)
     m_template = load_video(path_template, framerate, play_movies=False)
     
-    m_corr_orig = run_motioncorrect(m_orig)
-    m_corr_template = run_motioncorrect(m_template)
+    m_corr_orig = run_motioncorrect(m_orig, out_path=out_corr_template)
+    m_corr_template = run_motioncorrect(m_template, out_path=out_corr_template)
     
     m_orig_aligned = run_alignment(m_corr_orig, m_corr_template)
 
     m_corr_template.save(file_name=out_corr_template, 
             q_min=0.0, 
-            q_max=252.0)   
+            q_max=255.0)   
 
     m_orig_aligned.save(file_name=out_aligned, 
             q_min=0.0, 
-            q_max=252.0)
+            q_max=255.0)
     return
 
 # Function to run the full pipeline with snakemake parameters
