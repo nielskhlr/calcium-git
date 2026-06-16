@@ -1,0 +1,37 @@
+# ------------------------------------------------------------------
+# Conda
+conda-frontend:          "mamba"
+
+# ------------------------------------------------------------------
+# Paths
+raw_dir:                 "data/raw"
+motioncorrect_dir:       "results/motion_corrected"
+roi_dir:                 "results/rois"
+na3_dir:                 "results/na3"
+
+# ------------------------------------------------------------------
+# CaImAn Motion‑Correction
+mc:
+  max_shift: 
+  max_deviation_rigid: 
+  pw_rigid: 
+  gSig:          
+  strides: 
+  overlaps: 
+  upsample_factor_grid: 
+  border_nan: 
+
+# ------------------------------------------------------------------
+# StarDist
+stardist:
+  model: 
+  prob_thresh: 
+  nms_thresh: 
+  batch_size: 
+
+# ------------------------------------------------------------------
+# NA³
+na3:
+  wavelet:
+  sigma:
+  min_snr:
