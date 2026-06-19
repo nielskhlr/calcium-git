@@ -18,6 +18,9 @@ import argparse
 import os
 import time
 import shutil
+import zipfile
+from matplotlib.patches import Polygon, Circle
+from roifile import ImagejRoi
 
 # Function for reading video frames with OpenCV and converting them to a numpy array.
 # Here only the first channel is used, as the videos are single channel grayscale.
@@ -149,7 +152,8 @@ def predict_neurons(video_mean, video_path, export=True, prob=0.7):
 
     # If export is set to True, all the predicted ROIs are exported in the ImageJ format as a .zip file
     if export == True:
-        export_imagej_rois(roi_path, polygons['coord'])
+        coord_array = np.array(polygons['coord'])
+        export_imagej_rois(str(roi_path), coord_array)
     
     # Return the predicted labels and polygons for further processing
     return labels, polygons
@@ -233,13 +237,17 @@ def plot_predicted_neurons(video_mean, labels, ax=None):
     return ax
 
 # Function to export the selected ROIs as ImageJ ROIs in a .zip file, using the coordinates of the predicted polygons for the ROIs
-def export_roi_selection(labels, selected_rois, polygons, roi_output, export=True):
+def export_roi_selection(selected_rois, polygons, roi_output, export=True):
+    all_coords = np.array(polygons['coord'])
+
+    indices = [int(rid) - 1 for rid in selected_rois if int(rid) - 1 < len(all_coords)]
+
     # Select the polygons for the selected ROIs
-    selected_polygons = [polygons['coord'][i-1] for i in selected_rois if i-1 < len(polygons['coord'])]
+    selected_polygons = all_coords[indices]
 
     # Exporting the polygons of the selected ROIs as ImageJ ROIs in a .zip file
     if export == True:
-        export_imagej_rois(roi_output, selected_polygons)
+        export_imagej_rois(str(roi_output), selected_polygons)
         print(f"Exported selected ROIs to: {roi_output}")
     # Return the selected polygons for potential further use
     return selected_polygons
@@ -368,6 +376,196 @@ def analyze_roi_traces(video, video_mean, video_path, labels, video_fps, show_gr
     print(str(counter)+" counted, positive ROIs")
     return selected_rois
 
+# Function to load and plot ROIs from a .zip file on top of the corresponding video mean image
+# Hands over the ROI data (points and polygons) in a list for potential further use, 
+# and plots the ROIs on the video mean image if specified
+def load_rois_from_zip(zip_path, video_mean_image=None, roi_number=None, plot=False, verbose=False):
+    # Load ROI files from the .zip archive
+    zip_roi = zipfile.ZipFile(zip_path, 'r')
+    roi_files = [f for f in zip_roi.namelist()]
+
+    # List to store ROI data for potential further use
+    roi_data_list = []  
+
+    # Detect ROI files in .zip
+    if verbose:
+        print(f"Found {len(roi_files)} ROI-files:")
+        print(f"First  - {roi_files[0]}")
+        print(f"Last  - {roi_files[-1]}")
+    if not roi_files:
+        zip_roi.close()
+        raise ValueError("No .roi files found in the ZIP archive.")
+    
+    # If a specific ROI number is provided, try to find it
+    # Else, all ROIs will be loaded
+    if roi_number is not None: 
+        if roi_number < len(roi_files):
+            if verbose:
+                print(f"Loading ROI file: {roi_files[roi_number]}")
+            selected_files = [roi_files[roi_number]]
+        else:
+            zip_roi.close()
+            raise ValueError(f"ROI number {roi_number} is out of range. Only {len(roi_files)} ROI files found.")
+    else:
+        if verbose:
+            print(f"Loading all ROI files.")
+        selected_files = roi_files
+
+    # Plotting on the video mean image
+    ax = None
+    if plot:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        if video_mean_image is not None:
+            ax.imshow(video_mean_image, cmap='gray', vmax=20)
+        else:
+            zip_roi.close()
+            raise ValueError(f"No mean intensity image given. Can't plot ROIs without mean intensity image.")
+
+    # ROI color map for plotting
+    color_list = ['red', 'blue', 'green', 'yellow', 'cyan', 'magenta', 'orange', 'purple']
+
+    # Loop through the selected ROI files and plot them on the video mean image
+    for i, roi_file in enumerate(selected_files):
+        try:
+            current_color = color_list[i % len(color_list)]
+            
+            # Read ROI data from the zip file
+            roi_bytes = zip_roi.read(roi_file)
+            if verbose:
+                print(f"Successfully extracted ROI file: {roi_file}")
+            roi_object = ImagejRoi.frombytes(roi_bytes)
+
+            # Format coords
+            coords = None
+            if hasattr(roi_object, 'subpixel_coordinates') and roi_object.subpixel_coordinates is not None:
+                coords = roi_object.subpixel_coordinates
+            elif hasattr(roi_object, 'coordinates') and roi_object.coordinates is not None:
+                coords = roi_object.coordinates() if callable(roi_object.coordinates) else roi_object.coordinates
+            
+            if plot and ax is not None and coords is not None:
+                # Check if polygon
+                if len(coords) > 2:
+                    if verbose:
+                        print("ROI Type: ", roi_object.roitype)
+                    poly = Polygon(coords, closed=True, fill=False, edgecolor=current_color, linewidth=1.5, alpha=0.9)
+                    ax.add_patch(poly)
+                    if roi_number:
+                        ax.text(coords[0][0] + 3, coords[0][1] - 3, str(roi_file[-7:-4]), 
+                            color=current_color, fontsize=8, weight='bold')
+                    else:
+                        ax.text(coords[0][0] + 3, coords[0][1] - 3, str(i + 1), 
+                            color=current_color, fontsize=8, weight='bold')
+                
+                elif len(coords) == 1: # Fallback if only one point
+                    if verbose:
+                        print("[WARNING] ROI Type: ", roi_object.roitype)
+                    x, y = coords[0][0], coords[0][1]
+                    circle = Circle((x, y), radius=3, edgecolor=current_color, facecolor='none', linewidth=1.5)
+                    ax.add_patch(circle)
+                    if roi_number:
+                        ax.text(x + 5, y - 5, str(roi_file[-7:-4]), color=current_color, fontsize=8, weight='bold')
+                    else:
+                        ax.text(x + 5, y - 5, str(i + 1), color=current_color, fontsize=8, weight='bold')
+
+            # Saving ROI data
+            roi_info = {
+                'type': roi_object.roitype,
+                'coordinates': roi_object.coordinates if hasattr(roi_object, 'coordinates') else None,
+                'subpixel_coordinates': roi_object.subpixel_coordinates if hasattr(roi_object, 'subpixel_coordinates') else None,
+                'name': roi_file,
+                'index': i
+            }
+
+            # Append the ROI information to the list for potential further use
+            roi_data_list.append(roi_info)
+
+        except Exception as e:
+            print(f"Error processing {roi_file}: {e}")
+            continue
+
+    # Close the zip file after processing
+    zip_roi.close()
+
+    # Finalize the plot
+    if plot:
+        ax.set_title("Predicted ROIs")
+        ax.axis('off')
+        plt.tight_layout()
+        plt.show()
+    return roi_data_list
+
+# Function to plot the ROI data (points and polygons) on top of the video mean image, using the ROI data list obtained 
+# from the load_rois_from_zip function, and plotting the points as circles and the polygons as closed shapes with specified 
+# colors and line widths
+def plot_rois(video_mean_image, roi_data_list, color_roi=None, ax=None):
+    # If no specific subfigure is provided for plotting, create a new figure and ax subplot
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Display the mean image of the video in grayscale on the specified ax, with a maximum intensity value for better contrast
+    ax.imshow(video_mean_image, cmap="gray", vmax=20)
+
+
+    if isinstance(color_roi, str):
+        color_list = [color_roi]
+    elif color_roi is None:
+        color_list = ['red', 'blue', 'green', 'yellow', 'cyan', 'magenta', 'orange', 'purple']
+
+    for i, roi_object in enumerate(roi_data_list):
+        try:
+            current_color = color_list[i % len(color_list)]
+
+            # Format coords
+            coords = None
+            if roi_object["subpixel_coordinates"] is not None:
+                coords = roi_object["subpixel_coordinates"]
+            elif roi_object['coordinates'] is not None:
+                coords = roi_object["coordinates"]
+              
+            # Check if Polygon
+            if len(coords) > 2:
+                poly = Polygon(coords, closed=True, fill=False, edgecolor=current_color, linewidth=1.5, alpha=0.9)
+                ax.add_patch(poly)
+                ax.text(coords[0][0] + 3, coords[0][1] - 3, str(roi_object['name'][-7:-4]), color=current_color, fontsize=8, weight='bold')
+            
+            # Fallback if only one point
+            elif len(coords) == 1: 
+                x, y = coords[0][0], coords[0][1]
+                circle = Circle((x, y), radius=3, edgecolor=current_color, facecolor='none', linewidth=1.5)
+                ax.add_patch(circle)
+                ax.text(x + 5, y - 5, str(roi_object['name'][-7:-4]), color=current_color, fontsize=8, weight='bold')
+
+        except Exception as e:        
+            print(f"Fehler beim Plotten von ROI {i+1}: {e}")
+            continue
+
+    ax.axis("off")
+    # return the subplot with the plotted contours for further use in if needed
+    return ax
+
+# Function to run the quality control in one pipeline
+# Loads the ROIs from .zip and plots it to the adjusted videos
+def roi_qc(zip_path, potassium_vid_path, spon_vid_path):
+    # Load the videos
+    spon_vid, spon_vid_path = load_file(spon_vid_path)
+    potassium_vid, potassium_vid_path = load_file(potassium_vid_path) # Load video
+
+    # Mean intensity pictures for plots, delete loaded videos
+    potassium_vid_mean = potassium_vid.mean(axis=0)
+    del potassium_vid
+    spon_vid_mean = spon_vid.mean(axis=0)
+    del spon_vid
+    
+    roi_data_list = load_rois_from_zip(zip_path)
+    
+    #plot means next to each other with conture ROIs
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+    plot_rois(potassium_vid_mean, roi_data_list, ax=axs[0])
+    axs[0].set_title("Corrected K+ Video for Prediction")
+    plot_rois(spon_vid_mean, roi_data_list, ax=axs[1])
+    axs[1].set_title("Aligned Video with ROIs for Analysis")
+    plt.show()
+
 # Main function to run the entire pipeline for ROI analysis, which includes loading the video file, predicting neurons, analyzing the 
 # fluorescence traces of the ROIs, exporting the selected ROIs, and comparing the original mean image with the predicted neurons 
 # and selected ROIs.
@@ -382,7 +580,7 @@ def roi_pipeline(path, roi_output, multi_files=False, file_id=None, export=True,
                                        video_fps=video_fps, show_graphs=show_graphs, prom=prom, 
                                        cutoff=cutoff)
     
-    selected_polygons = export_roi_selection(labels, selected_rois, polygons, roi_output=roi_output, export=export)
+    selected_polygons = export_roi_selection(selected_rois, polygons, roi_output, export)
     
     if compare == True:
         compare_roi_selection(video_mean, labels, selected_rois)
